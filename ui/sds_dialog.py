@@ -185,15 +185,19 @@ class SdsDialog(QDialog):
 
     def dropEvent(self, event) -> None:
         urls = event.mimeData().urls()
-        if not urls:
+        if not urls or not urls[0].isLocalFile():
             return
-        path = Path(urls[0].toLocalFile())
-        if path.is_file():
-            self._set_selected_file(str(path))
+        local_str = urls[0].toLocalFile()
+        if local_str:
+            self._set_selected_file(local_str)
 
     def _set_selected_file(self, path: str) -> None:
+        file_path = Path(path)
+        if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+            QMessageBox.warning(self, "Invalid file", "Please choose a PDF file.")
+            return
         self._selected_file_path = path
-        self.file_path_label.setText(Path(path).name)
+        self.file_path_label.setText(file_path.name)
         self.copy_into_storage_checkbox.setEnabled(True)
         self.copy_into_storage_checkbox.setToolTip("")
         self._autofill_from_pdf(path)

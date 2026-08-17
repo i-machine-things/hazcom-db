@@ -61,10 +61,22 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event) -> None:
         paths = []
         for url in event.mimeData().urls():
-            local_path = Path(url.toLocalFile())
+            # toLocalFile() returns "" for a non-local URL, and Path("") is
+            # the current working directory — is_dir() would then be True
+            # and trigger an unintended recursive scan of the app's CWD.
+            if not url.isLocalFile():
+                continue
+            local_str = url.toLocalFile()
+            if not local_str:
+                continue
+            local_path = Path(local_str)
             if local_path.is_dir():
-                paths.extend(str(p) for p in sorted(local_path.rglob("*.pdf")))
-            elif local_path.suffix.lower() == ".pdf":
+                paths.extend(
+                    str(p)
+                    for p in sorted(local_path.rglob("*"))
+                    if p.is_file() and p.suffix.lower() == ".pdf"
+                )
+            elif local_path.is_file() and local_path.suffix.lower() == ".pdf":
                 paths.append(str(local_path))
         if paths:
             self._run_import(paths)
