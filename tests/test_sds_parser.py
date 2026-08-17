@@ -62,6 +62,24 @@ def test_extract_fields_from_text_signal_word_fallback_without_label():
     assert fields["signal_word"] == "Danger"
 
 
+def test_extract_fields_from_text_explicit_none_label_is_authoritative():
+    # A labeled "Signal word: None" must not be overridden by an unrelated
+    # standalone DANGER elsewhere in the document (e.g. in another section).
+    text = (
+        "Signal word None.\n"
+        "16. Other information\n"
+        "DANGER: keep out of reach of children.\n"
+    )
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["signal_word"] is None
+
+
+def test_extract_fields_from_text_rejects_impossible_calendar_date():
+    text = "Revision Date: 2024-13-40\n"
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["revision_date"] is None
+
+
 def test_extract_fields_from_text_missing_fields_are_none():
     fields = sds_parser.extract_fields_from_text("Just some unrelated text.\n")
     assert fields["product_name"] is None
@@ -120,6 +138,20 @@ def test_extract_fields_from_text_real_world_sample():
     assert fields["cas_number"] == "64742-53-6, 68920-66-1, 10043-35-3, 112-34-5, 105-59-9"
     assert fields["revision_date"] == "2017-08-03"
     assert fields["signal_word"] is None  # SDS explicitly states "Signal word None."
+
+
+def test_extract_fields_returns_empty_dict_for_encrypted_pdf(tmp_path):
+    # PdfReader() can construct successfully for an encrypted PDF, but page
+    # access (len(reader.pages)) raises FileNotDecryptedError — must not
+    # escape extract_fields uncaught.
+    pdf_path = tmp_path / "encrypted.pdf"
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("secret")
+    with open(pdf_path, "wb") as f:
+        writer.write(f)
+
+    assert sds_parser.extract_fields(pdf_path) == {}
 
 
 def test_extract_fields_returns_empty_dict_for_non_pdf_file(tmp_path):

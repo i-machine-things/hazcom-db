@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from pathlib import Path
 
 import pypdf
@@ -66,11 +67,13 @@ def extract_fields(pdf_path: Path | str) -> dict:
     """Read a PDF and return best-guess SDS fields. Never raises; returns {} on any failure."""
     try:
         reader = pypdf.PdfReader(str(pdf_path))
+        # An encrypted PDF can construct successfully but raise (e.g.
+        # FileNotDecryptedError, a PdfReadError subclass) on first page access.
+        page_count = len(reader.pages)
     except (OSError, pypdf.errors.PdfReadError, ValueError) as exc:
         logger.warning("Could not open %s as a PDF: %s", pdf_path, exc)
         return {}
 
-    page_count = len(reader.pages)
     page_indices = list(range(min(_MAX_LEADING_PAGES, page_count)))
     if page_count > _MAX_LEADING_PAGES:
         page_indices.append(page_count - 1)
@@ -153,26 +156,38 @@ def _parse_date(text: str) -> str | None:
     for pattern, formatter in _DATE_FORMATS:
         match = pattern.search(text)
         if match:
-            return formatter(match)
+            return _validate_iso_date(formatter(match))
 
     month_match = _MONTH_DATE_RE.search(text)
     if month_match:
         month_name, day, year = month_match.groups()
         month = _MONTHS.get(month_name.lower())
         if month:
-            return f"{year}-{month:02d}-{int(day):02d}"
+            return _validate_iso_date(f"{year}-{month:02d}-{int(day):02d}")
 
     return None
 
 
+def _validate_iso_date(candidate: str) -> str | None:
+    """Reject calendar-impossible values (e.g. "2024-13-40") that the regex
+    formatters would otherwise pass through as if they were valid."""
+    try:
+        return date.fromisoformat(candidate).isoformat()
+    except ValueError:
+        return None
+
+
 def _find_signal_word(lines: list[str], full_text: str) -> str | None:
     labeled = _find_label_value(lines, _SIGNAL_WORD_LABELS)
-    if labeled:
+    if labeled is not None:
         lowered = labeled.lower()
         if "danger" in lowered:
             return "Danger"
         if "warning" in lowered:
             return "Warning"
+        # An explicit "Signal word: None"-style label is authoritative — don't
+        # let an unrelated standalone DANGER/WARNING elsewhere override it.
+        return None
 
     danger_match = re.search(r"\bDANGER\b", full_text)
     warning_match = re.search(r"\bWARNING\b", full_text)
