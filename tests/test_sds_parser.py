@@ -34,6 +34,31 @@ def test_extract_fields_from_text_next_line_style():
     assert fields["manufacturer"] == "ACME Chemical Co."
 
 
+def test_extract_fields_from_text_strips_embedded_label_from_fallback_line():
+    # Real-world case (Goo Gone SDS): "Product identifier" has no same-line
+    # value, and the fallback next-line grab landed on a line that itself
+    # starts with a different field's label ("Trade name:").
+    text = "Product identifier\nTrade name: Goo Gone Goo & Adhesive Remover\n"
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["product_name"] == "Goo Gone Goo & Adhesive Remover"
+
+
+def test_extract_fields_from_text_manufacturer_not_matched_mid_sentence():
+    # Real-world case: "manufacturer" appearing inside an unrelated sentence
+    # (boilerplate/disclaimer text) must not be treated as the field label.
+    text = "For questions not covered here, please contact the manufacturer directly.\n"
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["manufacturer"] is None
+
+
+def test_extract_fields_from_text_manufacturer_skips_phone_number_fallback_line():
+    # Real-world case: a phone/fax line sitting between the "Manufacturer"
+    # label and the actual company name must be skipped, not captured.
+    text = "Manufacturer\nTel : +1-888-555-0100\nACME Corp\n"
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["manufacturer"] == "ACME Corp"
+
+
 def test_extract_fields_from_text_us_date_format():
     text = "Revision Date: 01/15/2024\n"
     fields = sds_parser.extract_fields_from_text(text)

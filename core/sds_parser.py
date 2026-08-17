@@ -104,12 +104,27 @@ def extract_fields_from_text(text: str) -> dict:
 
 
 _EMBEDDED_LABEL_RE = re.compile(r"\s{1,3}[A-Z][A-Za-z ]{2,20}:")
+_LEADING_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z /]{2,30}:\s*")
+_BOILERPLATE_CANDIDATE_RE = re.compile(r"^(?:tel|fax|phone|emergency)\b", re.IGNORECASE)
+_PHONE_NUMBER_RE = re.compile(r"[+(]?\d[\d\s().-]{6,}\d")
 
 
-def _find_label_value(lines: list[str], label_patterns: list[str]) -> str | None:
+def _find_label_value(
+    lines: list[str], label_patterns: list[str], anchored: bool = True
+) -> str | None:
     for i, line in enumerate(lines):
         for pattern in label_patterns:
-            match = re.search(pattern, line, re.IGNORECASE)
+            if anchored:
+                # Anchored near the start of the line: an unanchored search
+                # can match the label word buried mid-sentence in unrelated
+                # body text (e.g. "...contact the manufacturer for
+                # questions."). Revision-date labels are the exception —
+                # they legitimately share a line with other label:value
+                # pairs (e.g. an SDS footer: "Version #: 1.0 Revision date:
+                # X Issue date: Y"), so that search stays unanchored.
+                match = re.match(r"\s*(?:" + pattern + r")", line, re.IGNORECASE)
+            else:
+                match = re.search(pattern, line, re.IGNORECASE)
             if not match:
                 continue
             after = line[match.end():]
@@ -126,12 +141,32 @@ def _find_label_value(lines: list[str], label_patterns: list[str]) -> str | None
                 if next_label:
                     after = after[: next_label.start()].strip()
             if after:
-                return after
-            for candidate in lines[i + 1:i + 3]:
+                return _strip_leading_label(after)
+            for candidate in lines[i + 1:i + 4]:
                 candidate = candidate.strip()
-                if candidate:
-                    return candidate
+                if not candidate or _looks_like_boilerplate(candidate):
+                    continue
+                return _strip_leading_label(candidate)
     return None
+
+
+def _strip_leading_label(text: str) -> str:
+    """A next-line fallback can grab a value line that itself starts with a
+    *different* field's label (e.g. a "Trade name:" line under a "Product
+    identifier" header) — strip that so it doesn't end up embedded in the
+    captured value."""
+    stripped = _LEADING_LABEL_RE.sub("", text, count=1).strip()
+    return stripped or text
+
+
+def _looks_like_boilerplate(text: str) -> bool:
+    """Skip fallback candidate lines that are clearly not a name/value —
+    phone numbers or "Tel:"/"Fax:" lines commonly sit right next to a
+    manufacturer's actual name in the address block."""
+    if _BOILERPLATE_CANDIDATE_RE.match(text):
+        return True
+    digit_count = sum(ch.isdigit() for ch in text)
+    return digit_count >= 7 and bool(_PHONE_NUMBER_RE.search(text))
 
 
 def _find_cas_numbers(text: str, limit: int = 8) -> str | None:
@@ -146,7 +181,7 @@ def _find_cas_numbers(text: str, limit: int = 8) -> str | None:
 
 
 def _find_revision_date(lines: list[str]) -> str | None:
-    candidate = _find_label_value(lines, _REVISION_DATE_LABELS)
+    candidate = _find_label_value(lines, _REVISION_DATE_LABELS, anchored=False)
     if not candidate:
         return None
     return _parse_date(candidate)
