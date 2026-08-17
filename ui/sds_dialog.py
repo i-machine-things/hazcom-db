@@ -116,6 +116,7 @@ class SdsDialog(QDialog):
 
         layout.addWidget(QLabel("Departments"))
         self.department_list = QListWidget()
+        self.department_list.setMaximumHeight(120)
         self._reload_department_list(departments)
         layout.addWidget(self.department_list)
 

@@ -135,6 +135,9 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(1, 160)  # Manufacturer
+        self.table.setColumnWidth(2, 160)  # Departments
+        self.table.setColumnWidth(3, 110)  # Revision Date
         self.table.doubleClicked.connect(lambda *_: self._open_selected_file())
         layout.addWidget(self.table)
 
