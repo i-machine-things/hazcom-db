@@ -1,0 +1,4 @@
+# hazcom-db requirements
+
+# Qt GUI framework
+PyQt6>=6.5.0
