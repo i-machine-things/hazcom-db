@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -28,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import db
+from ui.import_dialog import ImportDialog
 from ui.sds_dialog import SdsDialog
 
 ALL_DEPARTMENTS_LABEL = "All Departments"
@@ -39,14 +43,54 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.conn = conn
         self._current_rows: list[sqlite3.Row] = []
+        # Non-modal dialogs need a strong reference kept somewhere or Qt/PyQt
+        # can garbage-collect them out from under the user; also lets more
+        # than one Add/Edit/Import dialog be open at once.
+        self._open_dialogs: list[QDialog] = []
 
         self.setWindowTitle("hazcom-db — SDS Manager")
         self.resize(1000, 600)
+        self.setAcceptDrops(True)
 
         self._build_ui()
         self._install_easter_egg()
         self.refresh_departments()
         self.refresh_results()
+
+    # --- Drag & drop: a single PDF opens Add SDS; multiple/a folder opens bulk import
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        paths = []
+        for url in event.mimeData().urls():
+            # toLocalFile() returns "" for a non-local URL, and Path("") is
+            # the current working directory — is_dir() would then be True
+            # and trigger an unintended recursive scan of the app's CWD.
+            if not url.isLocalFile():
+                continue
+            local_str = url.toLocalFile()
+            if not local_str:
+                continue
+            local_path = Path(local_str)
+            if local_path.is_dir():
+                paths.extend(
+                    str(p)
+                    for p in sorted(local_path.rglob("*"))
+                    if p.is_file() and p.suffix.lower() == ".pdf"
+                )
+            elif local_path.is_file() and local_path.suffix.lower() == ".pdf":
+                paths.append(str(local_path))
+
+        if len(paths) == 1:
+            # A single dropped file goes straight to the Add dialog (with the
+            # PDF opened for side-by-side comparison), rather than the batch
+            # review table — there's only one thing to review.
+            self._add_sds(initial_file_path=paths[0])
+        elif paths:
+            self._run_import(paths)
 
     # --- UI construction -----------------------------------------------------
 
@@ -96,9 +140,21 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.search_edit)
 
         add_sds_btn = QPushButton("Add SDS")
-        add_sds_btn.clicked.connect(self._add_sds)
+        # clicked emits a bool; a plain .connect(self._add_sds) would pass that
+        # bool into _add_sds's initial_file_path parameter.
+        add_sds_btn.clicked.connect(lambda: self._add_sds())
         top_bar.addWidget(add_sds_btn)
+
+        import_btn = QPushButton("Import Files...")
+        import_btn.clicked.connect(self._import_files)
+        top_bar.addWidget(import_btn)
         layout.addLayout(top_bar)
+
+        hint_label = QLabel(
+            "Tip: drag & drop a single SDS PDF to add it, or several files/a folder to bulk import."
+        )
+        hint_label.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(hint_label)
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -106,6 +162,9 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(1, 160)  # Manufacturer
+        self.table.setColumnWidth(2, 160)  # Departments
+        self.table.setColumnWidth(3, 110)  # Revision Date
         self.table.doubleClicked.connect(lambda *_: self._open_selected_file())
         layout.addWidget(self.table)
 
@@ -228,13 +287,40 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
-    def _add_sds(self) -> None:
+    def _add_sds(self, initial_file_path: str | None = None) -> None:
         departments = db.list_departments(self.conn)
-        dialog = SdsDialog(self.conn, departments)
-        if dialog.exec():
-            self._commit_sds(dialog.get_data())
-        self.refresh_departments()
-        self.refresh_results()
+        dialog = SdsDialog(
+            self.conn, departments, initial_file_path=initial_file_path, parent=self
+        )
+        self._open_sds_dialog(dialog, existing_row=None)
+
+    def _import_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import SDS Files", "", "PDF Files (*.pdf);;All Files (*)"
+        )
+        if paths:
+            self._run_import(paths)
+
+    def _run_import(self, paths: list[str]) -> None:
+        departments = db.list_departments(self.conn)
+        dialog = ImportDialog(self.conn, departments, paths, parent=self)
+        self._track_open_dialog(dialog)
+
+        def _on_finished(result: int) -> None:
+            if result == QDialog.DialogCode.Accepted:
+                entries = dialog.get_selected_entries()
+                imported = sum(1 for entry in entries if self._commit_sds(entry))
+                QMessageBox.information(
+                    self, "Import complete", f"Imported {imported} of {len(paths)} file(s)."
+                )
+            self.refresh_departments()
+            self.refresh_results()
+            self._untrack_open_dialog(dialog)
+
+        dialog.finished.connect(_on_finished)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _edit_selected_sds(self) -> None:
         row = self._selected_row()
@@ -248,11 +334,35 @@ class MainWindow(QMainWindow):
             departments,
             existing=row,
             existing_department_ids=department_ids,
+            parent=self,
         )
-        if dialog.exec():
-            self._commit_sds(dialog.get_data(), existing_row=row)
-        self.refresh_departments()
-        self.refresh_results()
+        self._open_sds_dialog(dialog, existing_row=row)
+
+    def _open_sds_dialog(self, dialog: SdsDialog, existing_row: sqlite3.Row | None) -> None:
+        self._track_open_dialog(dialog)
+
+        def _on_finished(result: int) -> None:
+            if result == QDialog.DialogCode.Accepted:
+                self._commit_sds(dialog.get_data(), existing_row=existing_row)
+            self.refresh_departments()
+            self.refresh_results()
+            self._untrack_open_dialog(dialog)
+
+        dialog.finished.connect(_on_finished)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _track_open_dialog(self, dialog: QDialog) -> None:
+        # Non-modal (see CODING_NOTES: "Don't block other programs") so the
+        # user can freely switch to a PDF opened for comparison, or back to
+        # the main window, while it's open.
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        self._open_dialogs.append(dialog)
+
+    def _untrack_open_dialog(self, dialog: QDialog) -> None:
+        if dialog in self._open_dialogs:
+            self._open_dialogs.remove(dialog)
 
     def _commit_sds(self, data: dict, existing_row: sqlite3.Row | None = None) -> bool:
         # File-safety ordering (CODING_NOTES: "File replace must create-then-persist-then-delete"):

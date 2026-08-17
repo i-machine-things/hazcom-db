@@ -228,6 +228,50 @@ def test_delete_sds_sheet_leaves_external_file(conn, tmp_path, monkeypatch):
     assert external_file.exists()
 
 
+def test_find_possible_duplicates_exact_cas_match(conn):
+    db.add_sds_sheet(
+        conn, product_name="Acetone", cas_number="67-64-1", file_path="a.pdf"
+    )
+    matches = db.find_possible_duplicates(conn, product_name="Propanone", cas_number="67-64-1")
+    assert len(matches) == 1
+    assert matches[0]["product_name"] == "Acetone"
+
+
+def test_find_possible_duplicates_exact_name_match(conn):
+    db.add_sds_sheet(conn, product_name="Acetone", file_path="a.pdf")
+    matches = db.find_possible_duplicates(conn, product_name="acetone")
+    assert len(matches) == 1
+
+
+def test_find_possible_duplicates_fuzzy_match_same_manufacturer(conn):
+    db.add_sds_sheet(
+        conn, product_name="Acetone ACS Grade", manufacturer="ACME Chemical", file_path="a.pdf"
+    )
+    matches = db.find_possible_duplicates(
+        conn, product_name="Acetone, ACS Grade", manufacturer="ACME Chemical"
+    )
+    assert len(matches) == 1
+
+
+def test_find_possible_duplicates_no_false_positive_for_different_products(conn):
+    db.add_sds_sheet(conn, product_name="Acetone", file_path="a.pdf")
+    matches = db.find_possible_duplicates(conn, product_name="Isopropyl Alcohol")
+    assert matches == []
+
+
+def test_find_possible_duplicates_excludes_self_when_editing(conn):
+    sds_id = db.add_sds_sheet(conn, product_name="Acetone", file_path="a.pdf")
+    matches = db.find_possible_duplicates(
+        conn, product_name="Acetone", exclude_sds_id=sds_id
+    )
+    assert matches == []
+
+
+def test_find_possible_duplicates_returns_empty_without_name_or_cas(conn):
+    db.add_sds_sheet(conn, product_name="Acetone", file_path="a.pdf")
+    assert db.find_possible_duplicates(conn) == []
+
+
 def test_copy_into_storage_avoids_collisions(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATA_DIR", tmp_path)
     monkeypatch.setattr(db, "SDS_FILES_DIR", tmp_path / "sds_files")

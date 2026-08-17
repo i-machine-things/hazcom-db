@@ -10,6 +10,10 @@ access required.
 
 - Add SDS sheets with product name, manufacturer, CAS number(s), revision date, signal word, and
   notes.
+- **Auto-fill from the PDF**: picking a file (browse, or drag & drop) scans it for these fields
+  and pre-fills the form — always shown for review, never saved without you looking at it.
+- **Duplicate flagging**: as you fill in product name / manufacturer / CAS number, the app checks
+  for existing sheets that look like a match and warns you before saving.
 - Attach the SDS file either by **copying it into the app's own storage** (default — keeps the
   app self-contained and portable) or by **referencing the file at its current location**.
 - Tag each SDS sheet with one or more departments; manage the department list directly in the app
@@ -18,11 +22,24 @@ access required.
   number.
 - Open the attached PDF straight from the app (double-click a row, or the "Open File" button) in
   your system's default viewer.
+- **Bulk import**: drag & drop a folder of SDS PDFs (or several files) onto the main window, or use
+  "Import Files...", to review auto-filled fields and duplicate flags for the whole batch before
+  importing.
+
+## ⚠️ Auto-fill accuracy
+
+SDS PDFs vary a lot in layout across manufacturers, and field auto-fill is best-effort — it will
+sometimes leave a field blank or fill in the wrong value (mismatched labels, garbled text from a
+PDF's own font encoding, etc.). **Always compare auto-filled fields against the source PDF**,
+which opens automatically in your system's default viewer when you select a file, before saving.
+Extraction quality is being tuned against a growing set of real-world sample sheets — see
+`core/sds_parser.py` and the "PDF Field Extraction" notes in `.claude/CODING_NOTES.md`.
 
 ## Requirements
 
 - Python 3.10+
 - PyQt6
+- pypdf (for PDF field auto-fill)
 
 ## Setup
 
@@ -58,9 +75,11 @@ unit-testable without a Qt platform plugin. UI code lives in `ui/`.
 ```
 main.py             # entry point
 core/db.py           # schema, connection, CRUD, search/filter, managed file storage
-ui/main_window.py     # main window: department sidebar, search, results table
-ui/sds_dialog.py       # Add/Edit SDS dialog
-tests/test_db.py        # data-layer test coverage
+core/sds_parser.py    # best-effort PDF field extraction for auto-fill
+ui/main_window.py     # main window: department sidebar, search, results table, drag & drop
+ui/sds_dialog.py       # Add/Edit SDS dialog: auto-fill, duplicate flagging, drag & drop
+ui/import_dialog.py     # bulk import review dialog
+tests/                    # data-layer and parser test coverage
 ```
 
 ## Status

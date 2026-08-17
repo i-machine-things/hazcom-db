@@ -2,3 +2,9 @@
 
 # Qt GUI framework
 PyQt6>=6.5.0
+
+# PDF text extraction for SDS field auto-fill
+# >=6.15.0: floor below this has known DoS advisories (infinite loops /
+# memory exhaustion parsing malformed cross-reference/FlateDecode streams) —
+# relevant since this app parses arbitrary user-selected/dropped PDFs.
+pypdf>=6.15.0
