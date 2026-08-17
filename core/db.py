@@ -6,6 +6,7 @@ platform plugin (see tests/test_db.py and the CI test job).
 
 from __future__ import annotations
 
+import difflib
 import shutil
 import sqlite3
 from pathlib import Path
@@ -273,6 +274,50 @@ def search_sds(
     return conn.execute(
         sql, {"department_id": department_id, "like": like_pattern}
     ).fetchall()
+
+
+def find_possible_duplicates(
+    conn: sqlite3.Connection,
+    *,
+    product_name: str | None = None,
+    manufacturer: str | None = None,
+    cas_number: str | None = None,
+    exclude_sds_id: int | None = None,
+    name_similarity_threshold: float = 0.82,
+) -> list[sqlite3.Row]:
+    """Advisory-only duplicate flag: exact CAS overlap, exact name match, or a
+    close name match (same manufacturer, or a very close match regardless)."""
+    if not product_name and not cas_number:
+        return []
+
+    cas_set = {c.strip() for c in (cas_number or "").split(",") if c.strip()}
+    name_norm = (product_name or "").strip().lower()
+    manufacturer_norm = (manufacturer or "").strip().lower()
+
+    matches = []
+    for row in conn.execute("SELECT * FROM sds_sheets").fetchall():
+        if exclude_sds_id is not None and row["id"] == exclude_sds_id:
+            continue
+
+        row_cas = {c.strip() for c in (row["cas_number"] or "").split(",") if c.strip()}
+        if cas_set and row_cas and cas_set & row_cas:
+            matches.append(row)
+            continue
+
+        row_name_norm = (row["product_name"] or "").strip().lower()
+        if name_norm and row_name_norm == name_norm:
+            matches.append(row)
+            continue
+
+        if name_norm and row_name_norm:
+            ratio = difflib.SequenceMatcher(None, name_norm, row_name_norm).ratio()
+            same_manufacturer = manufacturer_norm and (
+                row["manufacturer"] or ""
+            ).strip().lower() == manufacturer_norm
+            if ratio >= name_similarity_threshold and (same_manufacturer or ratio >= 0.95):
+                matches.append(row)
+
+    return matches
 
 
 # --- File storage -------------------------------------------------------------

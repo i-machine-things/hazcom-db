@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core import db
+from core import db, sds_parser
 
 SIGNAL_WORDS = ["", "Danger", "Warning"]
 
@@ -43,14 +43,17 @@ class SdsDialog(QDialog):
         self.conn = conn
         self.setWindowTitle("Edit SDS Sheet" if existing else "Add SDS Sheet")
         self.setMinimumWidth(480)
+        self.setAcceptDrops(True)
 
         self._selected_file_path: str | None = None
         self._existing = existing
         self._existing_department_ids = set(existing_department_ids or [])
+        self._has_duplicate_warning = False
 
         self._build_ui(departments)
         if existing is not None:
             self._populate_from_existing(existing)
+        self._check_duplicates()
 
     def _build_ui(self, departments: list[sqlite3.Row]) -> None:
         layout = QVBoxLayout(self)
@@ -58,12 +61,15 @@ class SdsDialog(QDialog):
         layout.addLayout(form)
 
         self.product_name_edit = QLineEdit()
+        self.product_name_edit.textChanged.connect(self._check_duplicates)
         form.addRow("Product Name*", self.product_name_edit)
 
         self.manufacturer_edit = QLineEdit()
+        self.manufacturer_edit.textChanged.connect(self._check_duplicates)
         form.addRow("Manufacturer", self.manufacturer_edit)
 
         self.cas_number_edit = QLineEdit()
+        self.cas_number_edit.textChanged.connect(self._check_duplicates)
         form.addRow("CAS Number(s)", self.cas_number_edit)
 
         date_row = QHBoxLayout()
@@ -86,7 +92,7 @@ class SdsDialog(QDialog):
         form.addRow("Notes", self.notes_edit)
 
         file_row = QHBoxLayout()
-        self.file_path_label = QLabel("No file selected")
+        self.file_path_label = QLabel("No file selected (or drag & drop a PDF onto this window)")
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_file)
         file_row.addWidget(self.file_path_label, stretch=1)
@@ -96,6 +102,17 @@ class SdsDialog(QDialog):
         self.copy_into_storage_checkbox = QCheckBox("Copy file into app storage")
         self.copy_into_storage_checkbox.setChecked(True)
         form.addRow("", self.copy_into_storage_checkbox)
+
+        self.autofill_status_label = QLabel("")
+        self.autofill_status_label.setStyleSheet("color: gray; font-style: italic;")
+        self.autofill_status_label.hide()
+        layout.addWidget(self.autofill_status_label)
+
+        self.duplicate_warning_label = QLabel("")
+        self.duplicate_warning_label.setStyleSheet("color: #b45309; font-weight: bold;")
+        self.duplicate_warning_label.setWordWrap(True)
+        self.duplicate_warning_label.hide()
+        layout.addWidget(self.duplicate_warning_label)
 
         layout.addWidget(QLabel("Departments"))
         self.department_list = QListWidget()
@@ -159,10 +176,85 @@ class SdsDialog(QDialog):
             self, "Select SDS File", "", "PDF Files (*.pdf);;All Files (*)"
         )
         if path:
-            self._selected_file_path = path
-            self.file_path_label.setText(Path(path).name)
-            self.copy_into_storage_checkbox.setEnabled(True)
-            self.copy_into_storage_checkbox.setToolTip("")
+            self._set_selected_file(path)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        path = Path(urls[0].toLocalFile())
+        if path.is_file():
+            self._set_selected_file(str(path))
+
+    def _set_selected_file(self, path: str) -> None:
+        self._selected_file_path = path
+        self.file_path_label.setText(Path(path).name)
+        self.copy_into_storage_checkbox.setEnabled(True)
+        self.copy_into_storage_checkbox.setToolTip("")
+        self._autofill_from_pdf(path)
+
+    def _autofill_from_pdf(self, path: str) -> None:
+        fields = sds_parser.extract_fields(path)
+        filled_any = False
+
+        if fields.get("product_name") and not self.product_name_edit.text().strip():
+            self.product_name_edit.setText(fields["product_name"])
+            filled_any = True
+        if fields.get("manufacturer") and not self.manufacturer_edit.text().strip():
+            self.manufacturer_edit.setText(fields["manufacturer"])
+            filled_any = True
+        if fields.get("cas_number") and not self.cas_number_edit.text().strip():
+            self.cas_number_edit.setText(fields["cas_number"])
+            filled_any = True
+        if fields.get("revision_date") and not self.has_revision_date_checkbox.isChecked():
+            date = QDate.fromString(fields["revision_date"], "yyyy-MM-dd")
+            if date.isValid():
+                self.has_revision_date_checkbox.setChecked(True)
+                self.revision_date_edit.setDate(date)
+                filled_any = True
+        if fields.get("signal_word") and not self.signal_word_combo.currentText():
+            self.signal_word_combo.setCurrentText(fields["signal_word"])
+            filled_any = True
+
+        if filled_any:
+            self.autofill_status_label.setText(
+                "Auto-filled from the PDF — please review each field for accuracy."
+            )
+            self.autofill_status_label.show()
+
+    def _check_duplicates(self, *_args) -> None:
+        product_name = self.product_name_edit.text().strip()
+        cas_number = self.cas_number_edit.text().strip()
+        if not product_name and not cas_number:
+            self.duplicate_warning_label.hide()
+            self._has_duplicate_warning = False
+            return
+
+        exclude_id = self._existing["id"] if self._existing is not None else None
+        matches = db.find_possible_duplicates(
+            self.conn,
+            product_name=product_name,
+            manufacturer=self.manufacturer_edit.text().strip(),
+            cas_number=cas_number,
+            exclude_sds_id=exclude_id,
+        )
+        self._has_duplicate_warning = bool(matches)
+        if matches:
+            names = ", ".join(
+                f"{m['product_name']} ({m['manufacturer'] or 'unknown manufacturer'})"
+                for m in matches[:3]
+            )
+            more = f", and {len(matches) - 3} more" if len(matches) > 3 else ""
+            self.duplicate_warning_label.setText(
+                f"⚠ Possible duplicate of: {names}{more}. Review before saving."
+            )
+            self.duplicate_warning_label.show()
+        else:
+            self.duplicate_warning_label.hide()
 
     def _add_department_inline(self) -> None:
         name = self.new_department_edit.text().strip()
@@ -184,6 +276,14 @@ class SdsDialog(QDialog):
         if self._selected_file_path is None and self._existing is None:
             QMessageBox.warning(self, "Missing file", "Choose a file for this SDS sheet.")
             return
+        if self._has_duplicate_warning:
+            confirm = QMessageBox.question(
+                self,
+                "Possible duplicate",
+                "This looks like it might duplicate an existing SDS sheet. Save anyway?",
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
         super().accept()
 
     def get_data(self) -> dict:

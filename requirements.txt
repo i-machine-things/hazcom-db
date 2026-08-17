@@ -2,3 +2,6 @@
 
 # Qt GUI framework
 PyQt6>=6.5.0
+
+# PDF text extraction for SDS field auto-fill
+pypdf>=4.0.0
