@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -28,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import db
+from ui.import_dialog import ImportDialog
 from ui.sds_dialog import SdsDialog
 
 ALL_DEPARTMENTS_LABEL = "All Departments"
@@ -42,11 +45,29 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("hazcom-db — SDS Manager")
         self.resize(1000, 600)
+        self.setAcceptDrops(True)
 
         self._build_ui()
         self._install_easter_egg()
         self.refresh_departments()
         self.refresh_results()
+
+    # --- Drag & drop: drop PDFs (or a folder of PDFs) to bulk import -----------
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        paths = []
+        for url in event.mimeData().urls():
+            local_path = Path(url.toLocalFile())
+            if local_path.is_dir():
+                paths.extend(str(p) for p in sorted(local_path.rglob("*.pdf")))
+            elif local_path.suffix.lower() == ".pdf":
+                paths.append(str(local_path))
+        if paths:
+            self._run_import(paths)
 
     # --- UI construction -----------------------------------------------------
 
@@ -98,7 +119,15 @@ class MainWindow(QMainWindow):
         add_sds_btn = QPushButton("Add SDS")
         add_sds_btn.clicked.connect(self._add_sds)
         top_bar.addWidget(add_sds_btn)
+
+        import_btn = QPushButton("Import Files...")
+        import_btn.clicked.connect(self._import_files)
+        top_bar.addWidget(import_btn)
         layout.addLayout(top_bar)
+
+        hint_label = QLabel("Tip: drag & drop SDS PDFs (or a folder of them) onto this window to import.")
+        hint_label.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(hint_label)
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -233,6 +262,25 @@ class MainWindow(QMainWindow):
         dialog = SdsDialog(self.conn, departments)
         if dialog.exec():
             self._commit_sds(dialog.get_data())
+        self.refresh_departments()
+        self.refresh_results()
+
+    def _import_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import SDS Files", "", "PDF Files (*.pdf);;All Files (*)"
+        )
+        if paths:
+            self._run_import(paths)
+
+    def _run_import(self, paths: list[str]) -> None:
+        departments = db.list_departments(self.conn)
+        dialog = ImportDialog(self.conn, departments, paths)
+        if dialog.exec():
+            entries = dialog.get_selected_entries()
+            imported = sum(1 for entry in entries if self._commit_sds(entry))
+            QMessageBox.information(
+                self, "Import complete", f"Imported {imported} of {len(paths)} file(s)."
+            )
         self.refresh_departments()
         self.refresh_results()
 
