@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -58,6 +59,9 @@ class ImportDialog(QDialog):
 
         self._build_ui(departments)
         self._populate_rows()
+        # Connect only after initial population so populating rows doesn't
+        # itself trigger a recompute pass.
+        self.table.itemChanged.connect(self._on_cell_changed)
 
     def _build_ui(self, departments: list[sqlite3.Row]) -> None:
         layout = QVBoxLayout(self)
@@ -124,15 +128,88 @@ class ImportDialog(QDialog):
                 row_index, COL_SIGNAL, QTableWidgetItem(fields.get("signal_word") or "")
             )
 
-            duplicates = db.find_possible_duplicates(
-                self.conn,
-                product_name=product_name,
-                manufacturer=fields.get("manufacturer"),
-                cas_number=fields.get("cas_number"),
-            )
-            flag_item = QTableWidgetItem("⚠ possible duplicate" if duplicates else "")
+            flag_item = QTableWidgetItem("")
             flag_item.setFlags(flag_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row_index, COL_FLAG, flag_item)
+
+        self._recompute_all_flags()
+
+    def _on_cell_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() in (COL_PRODUCT, COL_MANUFACTURER, COL_CAS):
+            self._recompute_all_flags()
+
+    def _recompute_all_flags(self) -> None:
+        # Editing one row can also affect whether other rows match it (a
+        # batch-internal duplicate), so recompute every row's flag rather
+        # than just the one that changed. Block signals to avoid re-entering
+        # _on_cell_changed while we update the (non-editable) flag cells.
+        self.table.blockSignals(True)
+        try:
+            for row_index in range(self.table.rowCount()):
+                self._update_flag(row_index)
+        finally:
+            self.table.blockSignals(False)
+
+    def _update_flag(self, row_index: int) -> None:
+        product_name = self.table.item(row_index, COL_PRODUCT).text().strip()
+        manufacturer = self.table.item(row_index, COL_MANUFACTURER).text().strip()
+        cas_number = self.table.item(row_index, COL_CAS).text().strip()
+
+        is_duplicate = bool(
+            db.find_possible_duplicates(
+                self.conn,
+                product_name=product_name,
+                manufacturer=manufacturer,
+                cas_number=cas_number,
+            )
+        ) or self._matches_another_row_in_batch(row_index, product_name, cas_number)
+
+        self.table.item(row_index, COL_FLAG).setText(
+            "⚠ possible duplicate" if is_duplicate else ""
+        )
+
+    def _matches_another_row_in_batch(
+        self, row_index: int, product_name: str, cas_number: str
+    ) -> bool:
+        name_norm = product_name.strip().lower()
+        cas_set = {c.strip() for c in cas_number.split(",") if c.strip()}
+        for other_index in range(self.table.rowCount()):
+            if other_index == row_index:
+                continue
+            other_name = self.table.item(other_index, COL_PRODUCT).text().strip().lower()
+            if name_norm and other_name == name_norm:
+                return True
+            other_cas = {
+                c.strip() for c in self.table.item(other_index, COL_CAS).text().split(",") if c.strip()
+            }
+            if cas_set and other_cas and cas_set & other_cas:
+                return True
+        return False
+
+    def accept(self) -> None:
+        self._recompute_all_flags()  # catch any edit that hasn't re-triggered a recompute yet
+
+        flagged_names = []
+        for row_index in range(self.table.rowCount()):
+            include_item = self.table.item(row_index, COL_INCLUDE)
+            if include_item.checkState() != Qt.CheckState.Checked:
+                continue
+            if self.table.item(row_index, COL_FLAG).text():
+                flagged_names.append(self.table.item(row_index, COL_FILENAME).text())
+
+        if flagged_names:
+            shown = ", ".join(flagged_names[:5])
+            more = f", and {len(flagged_names) - 5} more" if len(flagged_names) > 5 else ""
+            confirm = QMessageBox.question(
+                self,
+                "Possible duplicates",
+                f"{len(flagged_names)} file(s) look like possible duplicates: "
+                f"{shown}{more}.\n\nImport anyway?",
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+
+        super().accept()
 
     def _selected_department_ids(self) -> list[int]:
         ids = []
