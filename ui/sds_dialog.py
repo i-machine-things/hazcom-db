@@ -5,7 +5,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, QUrl, Qt
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,6 +38,7 @@ class SdsDialog(QDialog):
         departments: list[sqlite3.Row],
         existing: sqlite3.Row | None = None,
         existing_department_ids: list[int] | None = None,
+        initial_file_path: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -53,6 +55,8 @@ class SdsDialog(QDialog):
         self._build_ui(departments)
         if existing is not None:
             self._populate_from_existing(existing)
+        elif initial_file_path is not None:
+            self._set_selected_file(initial_file_path)
         self._check_duplicates()
 
     def _build_ui(self, departments: list[sqlite3.Row]) -> None:
@@ -200,6 +204,10 @@ class SdsDialog(QDialog):
         self.file_path_label.setText(file_path.name)
         self.copy_into_storage_checkbox.setEnabled(True)
         self.copy_into_storage_checkbox.setToolTip("")
+        # Open in the system default viewer so the auto-filled fields can be
+        # compared against the actual document. The dialog is non-modal (see
+        # MainWindow._track_open_dialog) so this doesn't get blocked.
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path)))
         self._autofill_from_pdf(path)
 
     def _autofill_from_pdf(self, path: str) -> None:
