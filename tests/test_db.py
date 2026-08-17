@@ -177,6 +177,41 @@ def test_delete_sds_sheet_removes_managed_file(conn, tmp_path, monkeypatch):
     assert not stored_file.exists()
 
 
+def test_delete_sds_sheet_ignores_absolute_path_outside_storage(conn, tmp_path, monkeypatch):
+    storage_dir = tmp_path / "sds_files"
+    storage_dir.mkdir()
+    monkeypatch.setattr(db, "SDS_FILES_DIR", storage_dir)
+
+    outside_file = tmp_path / "outside.pdf"
+    outside_file.write_bytes(b"%PDF-1.4 fake")
+
+    sds_id = db.add_sds_sheet(
+        conn, product_name="Acetone", file_path=str(outside_file), file_managed=True
+    )
+    db.delete_sds_sheet(conn, sds_id)
+
+    assert outside_file.exists(), "a malformed absolute file_path must not be deleted"
+
+
+def test_delete_sds_sheet_ignores_traversal_path_outside_storage(conn, tmp_path, monkeypatch):
+    storage_dir = tmp_path / "sds_files"
+    storage_dir.mkdir()
+    monkeypatch.setattr(db, "SDS_FILES_DIR", storage_dir)
+
+    outside_file = tmp_path / "outside.pdf"
+    outside_file.write_bytes(b"%PDF-1.4 fake")
+
+    sds_id = db.add_sds_sheet(
+        conn,
+        product_name="Acetone",
+        file_path="../outside.pdf",
+        file_managed=True,
+    )
+    db.delete_sds_sheet(conn, sds_id)
+
+    assert outside_file.exists(), "a malformed ../ file_path must not be deleted"
+
+
 def test_delete_sds_sheet_leaves_external_file(conn, tmp_path, monkeypatch):
     monkeypatch.setattr(db, "SDS_FILES_DIR", tmp_path)
     external_file = tmp_path / "external.pdf"

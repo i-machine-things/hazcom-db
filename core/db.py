@@ -219,6 +219,24 @@ def get_department_ids_for_sds(conn: sqlite3.Connection, sds_id: int) -> list[in
     return [row["department_id"] for row in rows]
 
 
+def _resolve_managed_path(file_path: str) -> Path | None:
+    """Resolve a stored managed file_path within SDS_FILES_DIR, or None if it
+    would escape that directory (absolute path or ../ traversal) — guards
+    against a malformed/imported record deleting an unrelated file."""
+    candidate = (SDS_FILES_DIR / file_path).resolve()
+    storage_root = SDS_FILES_DIR.resolve()
+    if candidate != storage_root and storage_root not in candidate.parents:
+        return None
+    return candidate
+
+
+def remove_managed_file(file_path: str) -> None:
+    """Delete a file from managed SDS storage, if it actually resolves within it."""
+    managed_path = _resolve_managed_path(file_path)
+    if managed_path is not None:
+        managed_path.unlink(missing_ok=True)
+
+
 def delete_sds_sheet(conn: sqlite3.Connection, sds_id: int) -> None:
     row = conn.execute(
         "SELECT file_path, file_managed FROM sds_sheets WHERE id = ?", (sds_id,)
@@ -228,7 +246,7 @@ def delete_sds_sheet(conn: sqlite3.Connection, sds_id: int) -> None:
     conn.execute("DELETE FROM sds_sheets WHERE id = ?", (sds_id,))
     conn.commit()
     if row["file_managed"]:
-        (SDS_FILES_DIR / row["file_path"]).unlink(missing_ok=True)
+        remove_managed_file(row["file_path"])
 
 
 def search_sds(

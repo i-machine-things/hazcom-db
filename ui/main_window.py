@@ -254,13 +254,25 @@ class MainWindow(QMainWindow):
         self.refresh_departments()
         self.refresh_results()
 
-    def _commit_sds(self, data: dict, existing_row: sqlite3.Row | None = None) -> None:
-        if data["source_file_path"] is not None:
-            if existing_row is not None and existing_row["file_managed"]:
-                (db.SDS_FILES_DIR / existing_row["file_path"]).unlink(missing_ok=True)
+    def _commit_sds(self, data: dict, existing_row: sqlite3.Row | None = None) -> bool:
+        # File-safety ordering (CODING_NOTES: "File replace must create-then-persist-then-delete"):
+        # create any replacement first, persist the DB row, and only delete the
+        # old managed file after persistence succeeds — so a failed copy or a
+        # failed DB write never leaves the row pointing at a deleted file.
+        file_replaced = data["source_file_path"] is not None
+        new_managed_copy_name: str | None = None
+
+        if file_replaced:
             if data["copy_into_storage"]:
-                file_path = db.copy_into_storage(data["source_file_path"])
+                try:
+                    file_path = db.copy_into_storage(data["source_file_path"])
+                except OSError as exc:
+                    QMessageBox.warning(
+                        self, "Could not save", f"Could not copy file into storage:\n{exc}"
+                    )
+                    return False
                 file_managed = True
+                new_managed_copy_name = file_path
             else:
                 file_path = data["source_file_path"]
                 file_managed = False
@@ -297,7 +309,15 @@ class MainWindow(QMainWindow):
                     department_ids=data["department_ids"],
                 )
         except ValueError as exc:
+            if new_managed_copy_name is not None:
+                db.remove_managed_file(new_managed_copy_name)
             QMessageBox.warning(self, "Could not save", str(exc))
+            return False
+
+        if file_replaced and existing_row is not None and existing_row["file_managed"]:
+            db.remove_managed_file(existing_row["file_path"])
+
+        return True
 
     def _delete_selected_sds(self) -> None:
         row = self._selected_row()

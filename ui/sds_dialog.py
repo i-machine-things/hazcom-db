@@ -147,6 +147,12 @@ class SdsDialog(QDialog):
         display_name = Path(existing["file_path"]).name
         self.file_path_label.setText(f"Current file: {display_name}")
         self.copy_into_storage_checkbox.setChecked(bool(existing["file_managed"]))
+        # Storage mode only applies to a newly-selected file — disabled until
+        # one is chosen, so it can't silently be ignored (see CODING_NOTES).
+        self.copy_into_storage_checkbox.setEnabled(False)
+        self.copy_into_storage_checkbox.setToolTip(
+            "Choose a replacement file to change how it's stored."
+        )
 
     def _browse_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -155,6 +161,8 @@ class SdsDialog(QDialog):
         if path:
             self._selected_file_path = path
             self.file_path_label.setText(Path(path).name)
+            self.copy_into_storage_checkbox.setEnabled(True)
+            self.copy_into_storage_checkbox.setToolTip("")
 
     def _add_department_inline(self) -> None:
         name = self.new_department_edit.text().strip()
