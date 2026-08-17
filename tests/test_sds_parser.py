@@ -71,6 +71,57 @@ def test_extract_fields_from_text_missing_fields_are_none():
     assert fields["signal_word"] is None
 
 
+def test_extract_fields_from_text_real_world_sample():
+    # Excerpted (pages 1-2) from a real Oemeta NOVAMET 875 SDS. Regression
+    # coverage for two bugs a real sample surfaced: "Manufacturer/Supplier"
+    # (compound label on one line) and "Revision date: X Issue date: Y"
+    # (two label:value pairs sharing one line, dash-separated MM-DD-YYYY).
+    text = (
+        "SAFETY DATA SHEET\n"
+        "1. Identification\n"
+        "Product identifier NOVAMET 875\n"
+        "Other means of identification\n"
+        "Article-No. 40870330\n"
+        "Recommended use Water-miscible metal working fluid. Industrial use.\n"
+        "Recommended restrictions None known.\n"
+        "Manufacturer/Supplier\n"
+        "Oemeta, Inc.\n"
+        "2339 South Decker Lake Blvd\n"
+        "West Valley City, UT 84119\n"
+        "Phone: (+1) 801 953-0381\n"
+        "Fax: (+1) 801 953-0446\n"
+        "2. Hazard(s) identification\n"
+        "Physical hazards Not classified.\n"
+        "Health hazards Not classified.\n"
+        "Label elements\n"
+        "Hazard symbol None.\n"
+        "Signal word None.\n"
+        "3. Composition/information on ingredients\n"
+        "Mixtures\n"
+        "1 / 8\n"
+        "Material name: NOVAMET 875\n"
+        "40870330 Version #: 1.0 Revision date: 08-03-2017 Issue date: 08-03-2017\n"
+        "SDS US\n"
+        "Chemical name Common name and synonyms CAS number %\n"
+        "Distillates, petroleum, hydrotreated 64742-53-6\n"
+        "light naphthenic\n"
+        "50 - < 60\n"
+        "Alcohols, C16-18 and C18-unsatd., 68920-66-1\n"
+        "ethoxylated\n"
+        "1 - < 5\n"
+        "Boric acid 10043-35-3 1 - < 3\n"
+        "Ethanol, 2-(2-butoxyethoxy)- 112-34-5 1 - < 5\n"
+        "Other components below reportable levels 30 - < 40\n"
+        "Ethanol, 2,2'-(methylimino)bis- 105-59-9 1 - < 5\n"
+    )
+    fields = sds_parser.extract_fields_from_text(text)
+    assert fields["product_name"] == "NOVAMET 875"
+    assert fields["manufacturer"] == "Oemeta, Inc."
+    assert fields["cas_number"] == "64742-53-6, 68920-66-1, 10043-35-3, 112-34-5, 105-59-9"
+    assert fields["revision_date"] == "2017-08-03"
+    assert fields["signal_word"] is None  # SDS explicitly states "Signal word None."
+
+
 def test_extract_fields_returns_empty_dict_for_non_pdf_file(tmp_path):
     fake = tmp_path / "not_a_pdf.pdf"
     fake.write_text("this is not a real pdf")

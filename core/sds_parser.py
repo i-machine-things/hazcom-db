@@ -41,6 +41,8 @@ def _iso_from_mdy(m: re.Match) -> str:
 _DATE_FORMATS = [
     (re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b"), _iso_from_ymd),
     (re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b"), _iso_from_mdy),
+    # US SDS footers commonly use dash-separated MM-DD-YYYY (e.g. "08-03-2017").
+    (re.compile(r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b"), _iso_from_mdy),
 ]
 
 _MONTHS = {
@@ -98,13 +100,28 @@ def extract_fields_from_text(text: str) -> dict:
     }
 
 
+_EMBEDDED_LABEL_RE = re.compile(r"\s{1,3}[A-Z][A-Za-z ]{2,20}:")
+
+
 def _find_label_value(lines: list[str], label_patterns: list[str]) -> str | None:
     for i, line in enumerate(lines):
         for pattern in label_patterns:
             match = re.search(pattern, line, re.IGNORECASE)
             if not match:
                 continue
-            after = line[match.end():].strip(" :\t-")
+            after = line[match.end():]
+            # A compound header like "Manufacturer/Supplier" only matched part
+            # of the label — the rest of the line isn't a value.
+            if after and after[0] not in " \t:-":
+                after = ""
+            else:
+                after = after.strip(" :\t-")
+                # Multiple "Label: value" pairs can share one line (e.g. an
+                # SDS footer: "Revision date: X Issue date: Y") — stop at the
+                # next embedded label so we don't swallow the next field too.
+                next_label = _EMBEDDED_LABEL_RE.search(after)
+                if next_label:
+                    after = after[: next_label.start()].strip()
             if after:
                 return after
             for candidate in lines[i + 1:i + 3]:
