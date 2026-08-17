@@ -26,6 +26,15 @@ access required.
   "Import Files...", to review auto-filled fields and duplicate flags for the whole batch before
   importing.
 
+## ⚠️ Auto-fill accuracy
+
+SDS PDFs vary a lot in layout across manufacturers, and field auto-fill is best-effort — it will
+sometimes leave a field blank or fill in the wrong value (mismatched labels, garbled text from a
+PDF's own font encoding, etc.). **Always compare auto-filled fields against the source PDF**,
+which opens automatically in your system's default viewer when you select a file, before saving.
+Extraction quality is being tuned against a growing set of real-world sample sheets — see
+`core/sds_parser.py` and the "PDF Field Extraction" notes in `.claude/CODING_NOTES.md`.
+
 ## Requirements
 
 - Python 3.10+

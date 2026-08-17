@@ -235,7 +235,9 @@ class SdsDialog(QDialog):
 
         if filled_any:
             self.autofill_status_label.setText(
-                "Auto-filled from the PDF — please review each field for accuracy."
+                "Auto-filled from the PDF — accuracy varies by document format. "
+                "Compare each field against the PDF (opened alongside this window) "
+                "before saving."
             )
             self.autofill_status_label.show()
 
