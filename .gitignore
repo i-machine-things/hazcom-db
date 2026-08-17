@@ -11,6 +11,10 @@ env/
 # App runtime data (SQLite DB + stored SDS files) — not source
 data/
 
+# Real SDS PDFs dropped locally for parser hardening — not ours to redistribute
+tests/fixtures/sds_samples/*
+!tests/fixtures/sds_samples/README.md
+
 # Editor
 .vscode/
 .idea/

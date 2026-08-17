@@ -22,6 +22,11 @@
 - **A next-line fallback candidate can itself start with a different field's label.** "Product identifier" with no same-line value, followed by "Trade name: X" as the next line, produced "Trade name: X" as the product name — the fallback grabbed the raw line without checking whether it had its own embedded label. `_strip_leading_label()` now strips a generic `"Label: "` prefix from any fallback candidate.
 - **Skip phone/fax lines when scanning fallback candidates for a name.** A "Tel:"/"Fax:" line (or a line that's mostly digits) sitting between a label and the real value it's for got captured as the value; `_looks_like_boilerplate()` skips these and keeps scanning subsequent lines.
 - **Real SDS diversity across vendors is the real test, not one sample.** The Oemeta sample alone passed but a 6-file batch across different vendors (WD-40, Blaster, Lucas, Phillips 66, ACE) surfaced several more failure modes above. Label-search heuristics need testing against several real, differently-formatted SDS before being trusted — revision-date extraction in particular is still missing on a number of real documents and needs more real samples to diagnose further.
+- **Real SDS PDFs aren't ours to commit to a public repo.** Drop real samples in the gitignored `tests/fixtures/sds_samples/` locally instead — see that directory's `README.md` for the local smoke test (`tests/test_sds_parser_samples.py`) and `tools/inspect_sds.py`. When a sample surfaces a bug, extract just the failing text into a proper `tests/test_sds_parser.py` case (not the PDF itself).
+
+## Open Items (hazcom-db)
+
+- **Parser hardening against a larger real-world dataset — pending.** Known gaps as of this scaffold: revision-date extraction still misses on a number of real documents (root cause undiagnosed — no real PDF bytes to test against yet, only reconstructed text), and one manufacturer name came out corrupted ("MENETA, INC" instead of "Oemeta, Inc.") which looks like a PDF font/ToUnicode encoding artifact rather than a parsing-logic bug. Considered switching from `pypdf` to PyMuPDF (`fitz`, already used in the user's JobDocs project) for more robust extraction, but decided not to swap speculatively without real files to test both against.
 
 ## UI Layout (hazcom-db)
 
