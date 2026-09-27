@@ -125,10 +125,11 @@ git push origin v1.2.3
 After every merge to `master`, count commits since the last `v*` tag:
 
 ```bash
-git log $(git describe --tags --abbrev=0)..master --oneline
+git log $(git describe --tags --abbrev=0)..master --format='%s'
 ```
 
-Count by type:
+Count by type (`--format='%s'` prints subjects only; `--oneline` would put the hash first and nothing
+would match):
 - Lines starting with `feat:` → feature count
 - Lines starting with `fix:` → fix count
 
